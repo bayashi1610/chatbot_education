@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>ChatGPT 子ども向けチャットアプリ</title>
+  <style>
+    /* ----- 全体レイアウト ----- */
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+      background: #f0f8ff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    #chat-container {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      max-width: 600px;
+      height: 100%;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    /* ----- メッセージ表示領域 ----- */
+    #message-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: #f9fcff;
+    }
+    .message {
+      display: inline-block;
+      padding: 12px;
+      border-radius: 16px;
+      max-width: 75%;
+      line-height: 1.4;
+      word-wrap: break-word;
+      position: relative;
+    }
+    /* 吹き出しの矢印 */
+    .bot::after {
+      content: '';
+      position: absolute;
+      top: 12px;
+      left: -8px;
+      border: 8px solid transparent;
+      border-right-color: #d4edda;
+    }
+    .user::after {
+      content: '';
+      position: absolute;
+      top: 12px;
+      right: -8px;
+      border: 8px solid transparent;
+      border-left-color: #cce5ff;
+    }
+    .user {
+      background: #cce5ff;
+      align-self: flex-end;
+      text-align: right;
+    }
+    .bot {
+      background: #d4edda;
+      align-self: flex-start;
+      text-align: left;
+    }
+    .timestamp {
+      display: block;
+      font-size: 0.75rem;
+      color: #666;
+      margin-top: 4px;
+    }
+    /* ----- 入力エリア ----- */
+    #input-container {
+      display: flex;
+      padding: 12px;
+      background: #fff;
+      border-top: 1px solid #ddd;
+    }
+    textarea#user-input {
+      flex: 1;
+      padding: 14px;
+      font-size: 1.1rem;
+      border: 1px solid #aaa;
+      border-radius: 8px;
+      margin: 0 8px;
+      outline: none;
+      resize: none;
+      overflow: hidden;
+      line-height: 1.4;
+      max-height: 200px;
+    }
+    button {
+      padding: 14px 20px;
+      font-size: 1.1rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      min-width: 60px;
+      margin-left: 4px;
+    }
+    #send-btn { background: #007bff; color: #fff; }
+    #export-btn { background: #28a745; color: #fff; }
+    #clear-btn { background: #dc3545; color: #fff; }
+    #voice-btn { background: #ffc107; color: #000; }
+
+    /* ----- タブレット以上向け ----- */
+    @media (min-width: 768px) {
+      #chat-container { max-width: 90%; }
+      textarea#user-input { font-size: 1.2rem; }
+      button { font-size: 1.2rem; padding: 16px 24px; }
+    }
+
+    /* ----- スマホ向け ----- */
+    @media (max-width: 767px) {
+      #chat-container {
+        height: 100vh;
+        border-radius: 0;
+        box-shadow: none;
+      }
+      .message { max-width: 85%; }
+      #input-container {
+        padding: 8px;
+        position: sticky;
+        bottom: 0;
+        background: #fff;
+      }
+      textarea#user-input {
+        font-size: 1rem;
+        padding: 12px;
+      }
+      button {
+        font-size: 1rem;
+        padding: 12px 16px;
+        min-width: 50px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="chat-container">
+    <div id="message-container"></div>
+    <div id="input-container">
+      <button id="voice-btn">🗣️</button>
+      <textarea id="user-input" placeholder="質問を入力してください..." autocomplete="off" rows="1"></textarea>
+      <button id="send-btn">送信</button>
+      <button id="export-btn">ログ出力</button>
+      <button id="clear-btn">クリア</button>
+    </div>
+  </div>
+
+  <!-- PDF出力: jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script>
+    const API_KEY = 'YOUR_API_KEY_HERE';
+    const ENDPOINT = 'https://api.openai.com/v1/chat/completions';
+
+    let chatLog = [];
+    const msgContainer = document.getElementById('message-container');
+    const userInput    = document.getElementById('user-input');
+    const sendBtn      = document.getElementById('send-btn');
+    const exportBtn    = document.getElementById('export-btn');
+    const clearBtn     = document.getElementById('clear-btn');
+    const voiceBtn     = document.getElementById('voice-btn');
+
+    // テキストエリア自動拡張
+    userInput.addEventListener('input', () => {
+      userInput.style.height = 'auto';
+      userInput.style.height = userInput.scrollHeight + 'px';
+    });
+
+    // タイムスタンプ付きメッセージ追加
+    function addMessage(text, sender) {
+      const div = document.createElement('div');
+      div.classList.add('message', sender);
+      div.textContent = text;
+      const time = new Date();
+      const ts = document.createElement('span');
+      ts.classList.add('timestamp');
+      ts.textContent = time.getHours().toString().padStart(2,'0') + ':' + time.getMinutes().toString().padStart(2,'0');
+      div.appendChild(ts);
+      msgContainer.appendChild(div);
+      msgContainer.scrollTop = msgContainer.scrollHeight;
+      chatLog.push({ role: sender === 'user' ? 'user' : 'assistant', content: text, timestamp: time.toISOString() });
+    }
+
+    // 送信処理
+    sendBtn.addEventListener('click', () => {
+      const text = userInput.value.trim();
+      if (!text) return;
+      addMessage(text, 'user');
+      userInput.value = '';
+      userInput.style.height = 'auto';
+      callChatGPT(text);
+    });
+
+    // 音声入力
+    let recognition; 
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRec();
+      recognition.lang = 'ja-JP';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      voiceBtn.addEventListener('click', () => recognition.start());
+      recognition.onresult = e => { userInput.value = e.results[0][0].transcript; userInput.dispatchEvent(new Event('input')); };
+      recognition.onerror = () => recognition.stop();
+    } else {
+      voiceBtn.disabled = true;
+    }
+
+    // API呼び出し
+    async function callChatGPT(userText) {
+      try {
+        const body = { model: 'gpt-3.5-turbo', messages: chatLog.map(e=>({role:e.role,content:e.content})).concat({ role: 'user', content: userText }) };
+        const res = await fetch(ENDPOINT, { method: 'POST', headers: { 'Content-Type':'application/json','Authorization':`Bearer ${API_KEY}` }, body: JSON.stringify(body) });
+        const data = await res.json();
+        const botText = data.choices[0].message.content.trim();
+        addMessage(botText, 'bot');
+      } catch (err) {
+        console.error(err);
+        addMessage('エラーが発生しました。', 'bot');
+      }
+    }
+
+    // ログ出力
+    exportBtn.addEventListener('click', () => exportChatLog('txt'));
+    function exportChatLog(format) {
+      if (!chatLog.length) return;
+      let content, filename = `chat_log.${format}`;
+      if (format === 'csv') {
+        content = 'role,timestamp,content\n' + chatLog.map(e => `"${e.role}","${e.timestamp}","${e.content.replace(/"/g,'""')}"`).join('\n');
+      } else if (format === 'pdf') {
+        const { jsPDF } = window.jspdf, doc = new jsPDF(), lineHeight=10;
+        let y=10;
+        chatLog.forEach(e=>{ doc.text(`${e.timestamp} ${e.role}: ${e.content}`,10,y); y+=lineHeight; if(y>280){doc.addPage();y=10;} });
+        doc.save(filename);
+        return;
+      } else {
+        content = chatLog.map(e=>`${e.timestamp} ${e.role}: ${e.content}`).join('\n');
+      }
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    }
+
+    // 会話クリア
+    clearBtn.addEventListener('click', () => {
+      if (confirm('会話をクリアしますか？')) { chatLog = []; msgContainer.innerHTML = ''; }
+    });
+  </script>
+</body>
+</html>
